@@ -142,9 +142,8 @@ def simpleReactor(temperature,
     system = SimpleReactor(T, P, initialMoleFractions, termination, sensitivitySpecies, sensitivityThreshold)
     rmg.reactionSystems.append(system)
 
-
 # Reaction systems
-def liquidReactor(temperature, initialConcentrations, terminationConversion=None, terminationTime=None):
+def liquidReactor(temperature, initialConcentrations, terminationConversion=None, terminationTime=None, ConstantSpecies=None):
     logging.debug('Found LiquidReactor reaction system')
     T = Quantity(temperature)
     for spec,conc in initialConcentrations.iteritems():
@@ -160,6 +159,14 @@ def liquidReactor(temperature, initialConcentrations, terminationConversion=None
         termination.append(TerminationTime(Quantity(terminationTime)))
     if len(termination) == 0:
         raise InputError('No termination conditions specified for reaction system #{0}.'.format(len(rmg.reactionSystems)+2))
+    if ConstantSpecies is not None:
+        for ConstantSpecie in ConstantSpecies:
+            if not speciesDict.has_key(ConstantSpecie):
+                raise InputError('Species {} not found in the input file'.format(ConstantSpecie))
+            else:
+                speciesDict[ConstantSpecie].props['ConstantConcentration'] = True
+                #Might be useful to set something in the logging module to display species set with ConstantConcentration found?   
+                
     system = LiquidReactor(T, initialConcentrations, termination)
     rmg.reactionSystems.append(system)
     

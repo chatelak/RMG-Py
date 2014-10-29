@@ -67,7 +67,7 @@ cdef class ReactionSystem(DASSL):
         self.sensitivityCoefficients = None
         self.termination = termination or []
     
-    cpdef initializeModel(self, list coreSpecies, list coreReactions, list edgeSpecies, list edgeReactions, list pdepNetworks=None, atol=1e-16, rtol=1e-8):
+    cpdef initializeModel(self, list coreSpecies, list coreReactions, list edgeSpecies, list edgeReactions, list constantConcentrationSpecies,  list pdepNetworks=None, atol=1e-16, rtol=1e-8):
         """
         Initialize a simulation of the reaction system using the provided
         kinetic model. You will probably want to create your own version of this
@@ -95,7 +95,6 @@ cdef class ReactionSystem(DASSL):
         self.maxNetworkLeakRates = numpy.zeros((numPdepNetworks), numpy.float64)
         self.sensitivityCoefficients = numpy.zeros((numCoreSpecies, numCoreReactions), numpy.float64)
 
-    
     cpdef writeWorksheetHeader(self, worksheet):
         """
         Write some descriptive information about the reaction system to the
@@ -106,9 +105,10 @@ cdef class ReactionSystem(DASSL):
         worksheet.write(0, 0, 'Reaction System', style0)
 
     @cython.boundscheck(False)
-    cpdef simulate(self, list coreSpecies, list coreReactions, list edgeSpecies, list edgeReactions,
+    cpdef simulate(self, list coreSpecies, list coreReactions, list edgeSpecies, list edgeReactions, list constantConcentrationSpecies,
         double toleranceKeepInEdge, double toleranceMoveToCore, double toleranceInterruptSimulation,
-        list pdepNetworks=None, worksheet=None, absoluteTolerance=1e-16, relativeTolerance=1e-8, sensitivity=None, sensWorksheet=None):
+        list pdepNetworks=None, worksheet=None, absoluteTolerance=1e-16, relativeTolerance=1e-8,
+        sensitivity=None, sensWorksheet=None):
         """
         Simulate the reaction system with the provided reaction model,
         consisting of lists of core species, core reactions, edge species, and
@@ -140,10 +140,11 @@ cdef class ReactionSystem(DASSL):
         numCoreReactions = len(coreReactions)
 
         speciesIndex = {}
+        
         for index, spec in enumerate(coreSpecies):
             speciesIndex[spec] = index
         
-        self.initializeModel(coreSpecies, coreReactions, edgeSpecies, edgeReactions, pdepNetworks, absoluteTolerance, relativeTolerance)
+        self.initializeModel(coreSpecies, coreReactions, edgeSpecies, edgeReactions, constantConcentrationSpecies, pdepNetworks, absoluteTolerance, relativeTolerance)
 
         invalidObject = None
         terminated = False
@@ -245,7 +246,7 @@ cdef class ReactionSystem(DASSL):
                 maxNetworkIndex = numpy.argmax(networkLeakRates)
                 maxNetwork = pdepNetworks[maxNetworkIndex]
                 maxNetworkRate = networkLeakRates[maxNetworkIndex]
-
+                
             # Interrupt simulation if that flux exceeds the characteristic rate times a tolerance
             if maxSpeciesRate > toleranceMoveToCore * charRate and not invalidObject:
                 logging.info('At time {0:10.4e} s, species {1} exceeded the minimum rate for moving to model core'.format(self.t, maxSpecies))

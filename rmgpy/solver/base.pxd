@@ -46,11 +46,11 @@ cdef class ReactionSystem(DASSL):
     
     cdef public list termination
 
-    cpdef initializeModel(self, list coreSpecies, list coreReactions, list edgeSpecies, list edgeReactions, list pdepNetworks=?, atol=?, rtol=?)
+    cpdef initializeModel(self, list coreSpecies, list coreReactions, list edgeSpecies, list edgeReactions, list constantConcentrationSpecies, list pdepNetworks=?, atol=?, rtol=?)
 
     cpdef writeWorksheetHeader(self, worksheet)
     
-    cpdef simulate(self, list coreSpecies, list coreReactions, list edgeSpecies, list edgeReactions,
+    cpdef simulate(self, list coreSpecies, list coreReactions, list edgeSpecies, list edgeReactions, list constantConcentrationSpecies,
         double toleranceKeepInEdge, double toleranceMoveToCore, double toleranceInterruptSimulation,
         list pdepNetworks=?, worksheet=?, absoluteTolerance=?, relativeTolerance=?, sensitivity=?, sensWorksheet=?)
 

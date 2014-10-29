@@ -26,7 +26,7 @@
 ################################################################################
 
 """
-Contains the :class:`SimpleReactor` class, providing a reaction system
+Contains the :class:`LiquidReactor` class, providing a reaction system
 consisting of a homogeneous, isothermal, isobaric batch reactor.
 """
 
@@ -52,6 +52,9 @@ cdef class LiquidReactor(ReactionSystem):
     cdef public ScalarQuantity V
     cdef public ScalarQuantity P
     
+    cdef public constantConcentrationIndices
+    cdef public concentration0
+    
     cdef public dict initialConcentrations
     cdef public list sensitivity
     cdef public double sensitivityThreshold
@@ -63,8 +66,7 @@ cdef class LiquidReactor(ReactionSystem):
     cdef public numpy.ndarray reverseRateCoefficients
     cdef public numpy.ndarray networkLeakCoefficients
     cdef public numpy.ndarray jacobianMatrix
-
-    def __init__(self, T, initialConcentrations, termination, sensitivity=None, sensitivityThreshold=1e-3):
+    def __init__(self, T, initialConcentrations, termination, sensitivity=None, sensitivityThreshold=1e-3, constantConcentrationIndices=None, concentration0=None):
         ReactionSystem.__init__(self, termination)
         self.T = Quantity(T)
         self.P = Quantity(100000.,'kPa') # Arbitrary high pressure (1000 Bar) to get reactions in the high-pressure limit!
@@ -82,7 +84,11 @@ cdef class LiquidReactor(ReactionSystem):
         self.forwardRateCoefficients = None
         self.reverseRateCoefficients = None
         self.jacobianMatrix = None
+        #Constant concentration attributes
+        self.constantConcentrationIndices = None #store index of constant species 
+        self.concentration0 = None # Store initial concentration of the first constant species.
         
+                
     def convertInitialKeysToSpeciesObjects(self, speciesDict):
         """
         Convert the initialConcentrations dictionary from species names into species objects,
@@ -93,16 +99,16 @@ cdef class LiquidReactor(ReactionSystem):
             initialConcentrations[speciesDict[label]] = moleFrac
         self.initialConcentrations = initialConcentrations
 
-    cpdef initializeModel(self, list coreSpecies, list coreReactions, list edgeSpecies, list edgeReactions, list pdepNetworks=None, atol=1e-16, rtol=1e-8):
+    cpdef initializeModel(self, list coreSpecies, list coreReactions, list edgeSpecies, list edgeReactions, list constantConcentrationSpecies, list pdepNetworks=None, atol=1e-16, rtol=1e-8):
         """
-        Initialize a simulation of the simple reactor using the provided kinetic
+        Initialize a simulation of the liquid reactor using the provided kinetic
         model.
         """
-
+        
         # First call the base class version of the method
         # This initializes the attributes declared in the base class
-        ReactionSystem.initializeModel(self, coreSpecies, coreReactions, edgeSpecies, edgeReactions, pdepNetworks, atol, rtol)
-
+        ReactionSystem.initializeModel(self, coreSpecies, coreReactions, edgeSpecies, edgeReactions, constantConcentrationSpecies, pdepNetworks, atol, rtol)
+        
         cdef int numCoreSpecies, numCoreReactions, numEdgeSpecies, numEdgeReactions, numPdepNetworks
         cdef int i, j, l, index
         cdef double V
@@ -111,7 +117,7 @@ cdef class LiquidReactor(ReactionSystem):
         cdef numpy.ndarray[numpy.float64_t, ndim=1] forwardRateCoefficients, reverseRateCoefficients, networkLeakCoefficients
         
         pdepNetworks = pdepNetworks or []
-
+        
         numCoreSpecies = len(coreSpecies)
         numCoreReactions = len(coreReactions)
         numEdgeSpecies = len(edgeSpecies)
@@ -130,7 +136,14 @@ cdef class LiquidReactor(ReactionSystem):
             reactionIndex[rxn] = index
         for index, rxn in enumerate(edgeReactions):
             reactionIndex[rxn] = index + numCoreReactions
-
+            
+        #chatelak 09/27/14: check both if indices were already stored and if user provides species with constant concentration
+        if self.constantConcentrationIndices is None and constantConcentrationSpecies: 
+            self.constantConcentrationIndices = []
+            #Find indices of constant concentration species in the array and store it in `constantConcentrationIndices` attributes
+            for constantSpc in constantConcentrationSpecies:
+                self.constantConcentrationIndices.append(coreSpecies.index(constantSpc))
+            
         # Generate reactant and product indices
         # Generate forward and reverse rate coefficients k(T,P)
         reactantIndices = -numpy.ones((numCoreReactions + numEdgeReactions, 3), numpy.int )
@@ -172,9 +185,17 @@ cdef class LiquidReactor(ReactionSystem):
         for spec, conc in self.initialConcentrations.iteritems():
             self.coreSpeciesConcentrations[speciesIndex[spec]] = conc
         V = 1.0 / numpy.sum(self.coreSpeciesConcentrations)
+        
         self.V = Quantity(V,'m^3') #: volume (m3) required to contain one mole total of core species at start
         for j in range(y0.shape[0]):
             y0[j] = self.coreSpeciesConcentrations[j] * V
+        
+        #Chatelak: This is executed only if constant species are provided in the input file.
+        if self.constantConcentrationIndices is not None:
+            for constantIndice in self.constantConcentrationIndices:
+                if self.concentration0 is None: #Done like this to store the value only once
+                    #Store only concentration of the first constant species to recalculate Volume at the end.
+                    self.concentration0 = self.coreSpeciesConcentrations[constantIndice]
         
         # Initialize the model
         dydt0 = - self.residual(t0, y0, numpy.zeros((numCoreSpecies), numpy.float64))[0]
@@ -195,7 +216,7 @@ cdef class LiquidReactor(ReactionSystem):
 
         """
         Return the residual function for the governing DAE system for the
-        simple reaction system.
+        liquid reaction system.
         """
         cdef numpy.ndarray[numpy.int_t, ndim=2] ir, ip, inet
         cdef numpy.ndarray[numpy.float64_t, ndim=1] res, kf, kr, knet
@@ -204,7 +225,7 @@ cdef class LiquidReactor(ReactionSystem):
         cdef double k, V, reactionRate
         cdef numpy.ndarray[numpy.float64_t, ndim=1] coreSpeciesConcentrations, coreSpeciesRates, coreReactionRates, edgeSpeciesRates, edgeReactionRates, networkLeakRates
         cdef numpy.ndarray[numpy.float64_t, ndim=1] C
-
+        
         res = numpy.zeros(y.shape[0], numpy.float64)
 
         ir = self.reactantIndices
@@ -229,7 +250,7 @@ cdef class LiquidReactor(ReactionSystem):
 
         C = numpy.zeros_like(self.coreSpeciesConcentrations)
         V =  self.V.value_si # constant volume reactor
-
+                    
         for j in range(y.shape[0]):
             C[j] = y[j] / V
             coreSpeciesConcentrations[j] = C[j]
@@ -314,6 +335,13 @@ cdef class LiquidReactor(ReactionSystem):
                 reactionRate = k * C[inet[j,0]] * C[inet[j,1]] * C[inet[j,2]]
             networkLeakRates[j] = reactionRate
 
+        #chatelak 10/02/14: if constant concentration species declared recalculate volume using initial concentration of the first constant species.
+        #Volume change has to be considered in case of a very reactive system
+        if self.constantConcentrationIndices is not None:
+            #chatelak 10/02/14: Species Rate on constant species = 0. As it is done in JAVA. 
+            for spcIndice in self.constantConcentrationIndices:
+                coreSpeciesRates[spcIndice] = 0
+            
         self.coreSpeciesConcentrations = coreSpeciesConcentrations
         self.coreSpeciesRates = coreSpeciesRates
         self.coreReactionRates = coreReactionRates
@@ -322,6 +350,12 @@ cdef class LiquidReactor(ReactionSystem):
         self.networkLeakRates = networkLeakRates
 
         res = coreSpeciesRates * V - dydt
+        
+        #chatelak 10/27/14: If constant species provided in the input file: recalculate volume with the first Constant species only
+        #else no volume recalculation as it was before.
+        if self.constantConcentrationIndices is not None: 
+            V = y[self.constantConcentrationIndices[0]] / self.concentration0
+            
         return res, 0
     
     @cython.boundscheck(False)
@@ -637,6 +671,7 @@ cdef class LiquidReactor(ReactionSystem):
                             pd[ir[j,2], ip[j,2]] += deriv
 
         self.jacobianMatrix = pd + cj * numpy.identity(y.shape[0], numpy.float64)
+        
         return pd
     
     @cython.boundscheck(False)
@@ -699,5 +734,6 @@ cdef class LiquidReactor(ReactionSystem):
                 rateDeriv[ip[j,0], j] += flux
                 rateDeriv[ip[j,1], j] += flux  
                 rateDeriv[ip[j,2], j] += flux          
-                
+                       
         return rateDeriv
+
